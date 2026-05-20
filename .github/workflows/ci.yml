@@ -25,7 +25,8 @@ env:
   XCODE_PROJECT: app/app.xcodeproj
   XCODE_SCHEME: BatchDilutionMixer
   XCODE_TEST_SCHEME: AppTests
-  XCODE_DESTINATION: platform=iOS Simulator,name=iPhone 17 Pro
+  XCODE_BUILD_DESTINATION: generic/platform=iOS Simulator
+  XCODE_TEST_DEVICE_NAME: iPhone 17 Pro
   DERIVED_DATA_PATH: ${{ github.workspace }}/build/app/xcode-derived-data
 
 jobs:
@@ -90,19 +91,23 @@ jobs:
           CONFIGURATION="${{ env.CONFIGURATION }}" \
           XCODE_PROJECT="${{ env.XCODE_PROJECT }}" \
           XCODE_SCHEME="${{ env.XCODE_SCHEME }}" \
-          XCODE_DESTINATION="${{ env.XCODE_DESTINATION }}" \
+          XCODE_DESTINATION="${{ env.XCODE_BUILD_DESTINATION }}" \
           app/build.sh all
 
       - name: Run native XCTest gate
         run: |
           set -o pipefail
           mkdir -p .build
+          TEST_DEVICE_ID=$(
+            xcrun simctl list devices available -j |
+            python3 -c "import json, os, sys; data=json.load(sys.stdin); name=os.environ['XCODE_TEST_DEVICE_NAME']; devices=[device for runtime in data.get('devices', {}).values() for device in runtime if device.get('name') == name and device.get('isAvailable')]; devices or sys.exit(f'No available simulator named {name}'); print(devices[0]['udid'])"
+          )
           xcodebuild test \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_TEST_SCHEME" \
             -configuration "$TEST_CONFIGURATION" \
             -sdk iphonesimulator \
-            -destination "$XCODE_DESTINATION" \
+            -destination "platform=iOS Simulator,id=$TEST_DEVICE_ID" \
             -derivedDataPath "$DERIVED_DATA_PATH" \
             -enableCodeCoverage YES \
             CODE_SIGNING_ALLOWED=NO \
