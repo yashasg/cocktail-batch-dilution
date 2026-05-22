@@ -1,9 +1,5 @@
-# CI/CD Pipeline (GitLab bridge)
-#
-# GitHub Actions provides the macOS runner for GitLab push and merge-request
-# events forwarded through repository_dispatch. The job checks out the GitLab
-# branch, runs the same local validation gate as developers, and posts the
-# resulting status back to GitLab.
+# CI/CD Pipeline — GitLab bridge
+# Triggered by GitLab push/MR events, builds and tests on macOS, posts status back.
 
 name: CI
 
@@ -20,13 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   XCODE_VERSION: "26"
-  XCODE_PROJECT: app/app.xcodeproj
-  XCODE_SCHEME: BatchDilutionMixer
-  XCODE_TEST_SCHEME: AppTests
-  XCODE_BUILD_DESTINATION: generic/platform=iOS Simulator
-  XCODE_TEST_DEVICE_NAME: iPhone 17 Pro
   DERIVED_DATA_PATH: ${{ github.workspace }}/build/app/xcode-derived-data
 
 jobs:
@@ -48,30 +38,11 @@ jobs:
 
       - name: Resolve build profile
         run: |
-          EVENT="${{ github.event.client_payload.event }}"
-          BRANCH="${{ github.event.client_payload.branch }}"
-          if [[ "$EVENT" == "push" && "$BRANCH" == "main" ]]; then
-            BUILD_CONFIGURATION="Release"
+          if [[ "${{ github.event.client_payload.event }}" == "push" && "${{ github.event.client_payload.branch }}" == "main" ]]; then
+            echo "CONFIGURATION=Release" >> "$GITHUB_ENV"
           else
-            BUILD_CONFIGURATION="Debug"
+            echo "CONFIGURATION=Debug" >> "$GITHUB_ENV"
           fi
-          {
-            echo "CONFIGURATION=$BUILD_CONFIGURATION"
-            echo "TEST_CONFIGURATION=Debug"
-          } >> "$GITHUB_ENV"
-          echo "Resolved build profile: event=$EVENT branch=$BRANCH CONFIGURATION=$BUILD_CONFIGURATION TEST_CONFIGURATION=Debug"
-
-      - name: Set build metadata
-        run: |
-          COMMIT_HASH=$(git rev-parse --short HEAD)
-          BUILD_NUMBER=${{ github.run_number }}
-          MARKETING_VER=$(awk '/MARKETING_VERSION = /{gsub(/;/,""); print $NF; exit}' "$XCODE_PROJECT/project.pbxproj")
-          {
-            echo "BUILD_NUMBER=$BUILD_NUMBER"
-            echo "GIT_COMMIT_HASH=$COMMIT_HASH"
-            echo "MARKETING_VERSION=${MARKETING_VER:-unknown}"
-          } >> "$GITHUB_ENV"
-          echo "Version: marketing=${MARKETING_VER:-unknown} build=${BUILD_NUMBER} commit=${COMMIT_HASH}"
 
       - name: Restore DerivedData cache
         id: cache-derived-data
@@ -79,43 +50,33 @@ jobs:
         with:
           path: |
             ${{ env.DERIVED_DATA_PATH }}
-            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
-          key: derived-data-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-${{ env.CONFIGURATION }}-${{ env.TEST_CONFIGURATION }}-${{ github.event.client_payload.branch }}-${{ hashFiles('app/app.xcodeproj/**/*.pbxproj', 'app/app.xcodeproj/xcshareddata/xcschemes/*.xcscheme', 'app/build.sh', '.github/workflows/ci.yml') }}
+            $HOME/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+          key: derived-data-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-${{ env.CONFIGURATION }}-${{ github.event.client_payload.branch }}-${{ hashFiles('app/app.xcodeproj/**/*.pbxproj', 'app/app.xcodeproj/xcshareddata/xcschemes/*.xcscheme') }}
           restore-keys: |
             derived-data-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-${{ env.CONFIGURATION }}-${{ github.event.client_payload.branch }}-
             derived-data-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-${{ env.CONFIGURATION }}-main-
 
-      - name: Run local validation gate
-        run: |
-          DERIVED_DATA_PATH="${{ env.DERIVED_DATA_PATH }}" \
-          CONFIGURATION="${{ env.CONFIGURATION }}" \
-          XCODE_PROJECT="${{ env.XCODE_PROJECT }}" \
-          XCODE_SCHEME="${{ env.XCODE_SCHEME }}" \
-          XCODE_DESTINATION="${{ env.XCODE_BUILD_DESTINATION }}" \
-          app/build.sh all
+      - name: Restore Fastlane cache
+        id: cache-fastlane
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: /opt/homebrew/Cellar/fastlane
+          key: fastlane-brew-${{ runner.os }}
 
-      - name: Run native XCTest gate
-        run: |
-          set -o pipefail
-          mkdir -p .build
-          TEST_DEVICE_ID=$(
-            xcrun simctl list devices available -j |
-            python3 -c "import json, os, sys; data=json.load(sys.stdin); name=os.environ['XCODE_TEST_DEVICE_NAME']; devices=[device for runtime in data.get('devices', {}).values() for device in runtime if device.get('name') == name and device.get('isAvailable')]; devices or sys.exit(f'No available simulator named {name}'); print(devices[0]['udid'])"
-          )
-          xcodebuild test \
-            -project "$XCODE_PROJECT" \
-            -scheme "$XCODE_TEST_SCHEME" \
-            -configuration "$TEST_CONFIGURATION" \
-            -sdk iphonesimulator \
-            -destination "platform=iOS Simulator,id=$TEST_DEVICE_ID" \
-            -derivedDataPath "$DERIVED_DATA_PATH" \
-            -enableCodeCoverage YES \
-            CODE_SIGNING_ALLOWED=NO \
-            | tee .build/xcodebuild-test.log
-          if grep -Ei 'warning:|Invalid Configuration' .build/xcodebuild-test.log; then
-            echo "Xcode emitted warnings"
-            exit 1
-          fi
+      - name: Install Fastlane
+        if: steps.cache-fastlane.outputs.cache-hit != 'true'
+        run: brew install fastlane
+
+      - name: Save Fastlane cache
+        if: steps.cache-fastlane.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: /opt/homebrew/Cellar/fastlane
+          key: fastlane-brew-${{ runner.os }}
+
+      - name: Lint, Build & Test
+        working-directory: app
+        run: fastlane ci configuration:${{ env.CONFIGURATION }}
 
       - name: Save DerivedData cache
         if: always() && steps.cache-derived-data.outputs.cache-hit != 'true'
@@ -123,7 +84,7 @@ jobs:
         with:
           path: |
             ${{ env.DERIVED_DATA_PATH }}
-            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+            $HOME/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
           key: ${{ steps.cache-derived-data.outputs.cache-primary-key }}
 
       - name: Upload diagnostics on failure
@@ -138,21 +99,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Report coverage
-        if: always()
-        run: |
-          XCRESULT=$(find "$DERIVED_DATA_PATH/Logs/Test" -name "*.xcresult" 2>/dev/null | head -1)
-          if [[ -z "$XCRESULT" ]]; then
-            echo "No .xcresult found — skipping coverage report"
-            exit 0
-          fi
-          xcrun xccov view --report "$XCRESULT"
-
       - name: Post status to GitLab
         if: always()
         run: |
           STATE=$([[ "${{ job.status }}" == "success" ]] && echo "success" || echo "failed")
-          curl -X POST \
+          curl -fsSX POST \
             -H "PRIVATE-TOKEN: ${{ secrets.GITLAB_PAT }}" \
             "https://gitlab.com/api/v4/projects/${{ github.event.client_payload.project_id }}/statuses/${{ github.event.client_payload.sha }}" \
             -d "state=${STATE}" \
