@@ -94,6 +94,11 @@ jobs:
         run: |
           mkdir -p app/fastlane
           printf '%s' "$ASC_API_KEY_JSON" > app/fastlane/asc_api_key.json
+          # Fail fast if the secret was malformed / mangled
+          if ! python3 -c "import json,sys; json.load(open('app/fastlane/asc_api_key.json'))" 2>/dev/null; then
+            echo "::error::ASC_API_KEY_JSON secret is not valid JSON after write. Check the secret value (must be raw JSON, no surrounding quotes)."
+            exit 1
+          fi
         shell: bash
 
       - name: Verify ASC API key file written
