@@ -92,6 +92,28 @@ jobs:
         run: |
           mkdir -p app/fastlane
           printf '%s' "${{ secrets.ASC_API_KEY_JSON }}" > app/fastlane/asc_api_key.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('app/fastlane/asc_api_key.json')
+          try:
+              payload = json.loads(path.read_text())
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f"::error::ASC_API_KEY_JSON must be valid JSON in fastlane API key format ({exc})")
+
+          missing = []
+          if not payload.get('key_id'):
+              missing.append('key_id')
+          if not (payload.get('key') or payload.get('key_content') or payload.get('key_filepath')):
+              missing.append('key/key_content/key_filepath')
+
+          if missing:
+              raise SystemExit(
+                  '::error::ASC_API_KEY_JSON must include ' + ', '.join(missing) +
+                  ' (expected full fastlane API key JSON with key_id, issuer_id when applicable, key or key_content, and optional in_house)'
+              )
+          PY
         shell: bash
 
       - name: Restore DerivedData cache
@@ -106,27 +128,12 @@ jobs:
             derived-data-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-Release-${{ inputs.ref }}-
             derived-data-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-Release-main-
 
-      - name: Restore Fastlane cache
-        id: cache-fastlane
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      - name: Setup Ruby for fastlane
+        uses: ruby/setup-ruby@v1
         with:
-          path: /opt/homebrew/Cellar/fastlane
-          key: fastlane-brew-${{ runner.os }}
-
-      - name: Install Fastlane
-        if: steps.cache-fastlane.outputs.cache-hit != 'true'
-        run: brew install fastlane
-
-      - name: Install fastlane plugins
-        working-directory: app
-        run: fastlane install_plugins
-
-      - name: Save Fastlane cache
-        if: steps.cache-fastlane.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
-        with:
-          path: /opt/homebrew/Cellar/fastlane
-          key: fastlane-brew-${{ runner.os }}
+          ruby-version: '3.4'
+          bundler-cache: true
+          working-directory: app
 
       - name: Prepare Match authentication
         run: |
@@ -144,7 +151,7 @@ jobs:
       - name: Run XCTest gate
         if: ${{ !inputs.skip_tests }}
         working-directory: app
-        run: fastlane test
+        run: bundle exec fastlane test
 
       - name: Upload via Fastlane lane
         working-directory: app
@@ -159,7 +166,7 @@ jobs:
             fastlane_args+=("notes:$TESTFLIGHT_NOTES")
           fi
 
-          fastlane "${{ inputs.lane }}" "${fastlane_args[@]}"
+          bundle exec fastlane "${{ inputs.lane }}" "${fastlane_args[@]}"
 
       - name: Save DerivedData cache
         if: always() && steps.cache-derived-data.outputs.cache-hit != 'true'
@@ -191,6 +198,7 @@ jobs:
           name: xcode-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .build/xcodebuild-test.log
+            .build/gym/**/*.log
             ${{ env.DERIVED_DATA_PATH }}/Logs/Test/*.xcresult
             ${{ env.DERIVED_DATA_PATH }}/Logs/Build/*.xcactivitylog
           if-no-files-found: warn
