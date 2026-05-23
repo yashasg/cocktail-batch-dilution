@@ -132,6 +132,11 @@ jobs:
         run: |
           echo "MATCH_KEYCHAIN_PASSWORD=$(openssl rand -base64 24)" >> "$GITHUB_ENV"
 
+      - name: Install Apple WWDR intermediate certificate
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG6.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG6.cer
+          echo "WWDR_CERT_PATH=$RUNNER_TEMP/AppleWWDRCAG6.cer" >> "$GITHUB_ENV"
+
       - name: Run XCTest gate
         if: ${{ !inputs.skip_tests }}
         working-directory: app
