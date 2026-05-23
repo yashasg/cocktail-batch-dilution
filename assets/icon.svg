@@ -16,7 +16,7 @@
   </defs>
 
   <!-- Dark rounded background -->
-  <rect x="0" y="0" width="705" height="705" rx="155" ry="155" fill="#1B1C24"/>
+  <rect x="0" y="0" width="1024" height="1024" fill="#1B1C24"/>
 
   <g clip-path="url(#bgClip)">
     <!-- Cyan neon jigger outline -->
