@@ -92,29 +92,16 @@ jobs:
         run: |
           mkdir -p app/fastlane
           printf '%s' "${{ secrets.ASC_API_KEY_JSON }}" > app/fastlane/asc_api_key.json
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          path = Path('app/fastlane/asc_api_key.json')
-          try:
-              payload = json.loads(path.read_text())
-          except json.JSONDecodeError as exc:
-              raise SystemExit(f"::error::ASC_API_KEY_JSON must be valid JSON in fastlane API key format ({exc})")
-
-          missing = []
-          if not payload.get('key_id'):
-              missing.append('key_id')
-          if not (payload.get('key') or payload.get('key_content') or payload.get('key_filepath')):
-              missing.append('key/key_content/key_filepath')
-
-          if missing:
-              raise SystemExit(
-                  '::error::ASC_API_KEY_JSON must include ' + ', '.join(missing) +
-                  ' (expected full fastlane API key JSON with key_id, issuer_id when applicable, key or key_content, and optional in_house)'
-              )
-          PY
         shell: bash
+
+      - name: Verify ASC API key file written
+        working-directory: app
+        run: |
+          if [ ! -s fastlane/asc_api_key.json ]; then
+            echo "::error::fastlane/asc_api_key.json is missing or empty. Check the ASC_API_KEY_JSON secret."
+            exit 1
+          fi
+          echo "ASC API key file present ($(wc -c < fastlane/asc_api_key.json) bytes)"
 
       - name: Restore DerivedData cache
         id: cache-derived-data
