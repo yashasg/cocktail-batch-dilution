@@ -92,6 +92,22 @@ jobs:
         run: |
           mkdir -p app/fastlane
           printf '%s' "${{ secrets.ASC_API_KEY_JSON }}" > app/fastlane/asc_api_key.json
+          ruby -e "
+            require 'json'
+            require 'yaml'
+            path = 'app/fastlane/asc_api_key.json'
+            raw = File.read(path)
+            begin
+              JSON.parse(raw) # already valid JSON; no rewrite needed
+            rescue JSON::ParserError
+              # Secret stored as Ruby hash literal (e.g. {key_id: '...'}):
+              # YAML is a superset of that syntax and safe_load restricts
+              # deserialization to basic types (String, Integer, etc.) only.
+              hash = YAML.safe_load(raw)
+              raise \"ASC_API_KEY_JSON did not parse to a Hash (got #{hash.class})\" unless hash.is_a?(Hash)
+              File.write(path, hash.to_json)
+            end
+          "
         shell: bash
 
       - name: Verify ASC API key file written
