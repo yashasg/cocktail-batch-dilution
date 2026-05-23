@@ -117,6 +117,10 @@ jobs:
         if: steps.cache-fastlane.outputs.cache-hit != 'true'
         run: brew install fastlane
 
+      - name: Install fastlane plugins
+        working-directory: app
+        run: fastlane install_plugins
+
       - name: Save Fastlane cache
         if: steps.cache-fastlane.outputs.cache-hit != 'true'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
